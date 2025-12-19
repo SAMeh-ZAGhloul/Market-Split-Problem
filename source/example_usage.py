@@ -134,8 +134,8 @@ def run_example():
     print(f"{'Solver':<20} {'Success':<8} {'Time (s)':<10} {'Slack':<10} {'Valid':<8}")
     print("-" * 30)
     
-   _str:
-        success" if result[' = "Yes for result in resultssuccess'] else "No"
+    for result in results:
+        success_str = "Yes" if result['success'] else "No"
         time_str = f"{result['solve_time']:.3f}" if result['solve_time'] != float('inf') else "N/A"
         slack_str = f"{result['slack_total']:.3f}" if result['slack_total'] != float('inf') else "N/A"
         valid_str = "Yes" if result['valid'] else "No"
