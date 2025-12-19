@@ -298,35 +298,19 @@ Key insights:
 
 # Installation Guide - Quantum Market Split Problem
 
-### Create Virtual Environment 
 Python 3.12 must be used
 
 ```bash
-# Create a new virtual environment
 python3 -m venv market_split_env
 
-# Activate the virtual environment
-# On macOS/Linux:
 source market_split_env/bin/activate
 
-# On Windows:
-# market_split_env\Scripts\activate
-```
-
-### Install Dependencies
-
-```bash
-# Install all dependencies from the requirements file
 pip install -r source/requirements.txt
-```
 
-### Run Benchmarks 
-
-
-```bash
 cd source
 python3 benchmark_framework.py
 ```
+
 All benchmark results wil be stored in: source/benchmark_results.json
 
 ## Performance Notes

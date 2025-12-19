@@ -127,6 +127,62 @@ def solve_diophant_lattice(A, b, lambda_factor=100):
     # If no solution found, return None
     return None
 
+def local_search_improvement(initial_solution, A, b, max_iterations=None):
+    """
+    IBM's bf-DCQO Protocol: Local search improvement post-processing
+    
+    This implements the mandatory classical post-processing step from IBM's
+    quantum optimization methodology to improve quantum solutions.
+    
+    Args:
+        initial_solution: Initial binary solution from quantum solver
+        A: Constraint matrix
+        b: Target vector
+        max_iterations: Maximum iterations for local search
+        
+    Returns:
+        Improved solution or None if no improvement found
+    """
+    if max_iterations is None:
+        max_iterations = len(initial_solution)
+    
+    current_solution = initial_solution.copy() if hasattr(initial_solution, 'copy') else initial_solution[:]
+    current_slack = np.sum(np.abs(A.dot(current_solution) - b))
+    
+    improved = True
+    iterations = 0
+    
+    while improved and iterations < max_iterations:
+        improved = False
+        best_flip = None
+        best_slack = current_slack
+        
+        # Try flipping each bit
+        for i in range(len(current_solution)):
+            test_solution = current_solution.copy()
+            test_solution[i] = 1 - test_solution[i]  # Flip bit
+            test_slack = np.sum(np.abs(A.dot(test_solution) - b))
+            
+            if test_slack < best_slack:
+                best_slack = test_slack
+                best_flip = i
+                improved = True
+        
+        # Apply the best improvement found
+        if improved and best_flip is not None:
+            current_solution[best_flip] = 1 - current_solution[best_flip]
+            current_slack = best_slack
+            iterations += 1
+    
+    # Return improved solution only if we actually improved
+    final_slack = np.sum(np.abs(A.dot(current_solution) - b))
+    initial_slack = np.sum(np.abs(A.dot(initial_solution) - b))
+    
+    if final_slack < initial_slack:
+        return current_solution if isinstance(current_solution, list) else current_solution.tolist()
+    else:
+        return None
+
 class LatticeBasedSolver:
     """Lattice-based solver for Market Split Problem"""
     
@@ -141,8 +197,8 @@ class LatticeBasedSolver:
         try:
             solution = solve_diophant_lattice(A, b, self.lambda_factor)
             if solution is not None:
-                # Apply bit-flip local search post-processing to improve solution
-                improved_solution = self._bit_flip_local_search(solution, A, b)
+                # Apply IBM's bf-DCQO post-processing to improve solution
+                improved_solution = local_search_improvement(solution, A, b)
                 if improved_solution:
                     slack = np.sum(np.abs(A.dot(improved_solution) - b))
                     return {'x': improved_solution, 'slack_total': slack}, time.time() - start_time
@@ -167,7 +223,7 @@ class LatticeBasedSolver:
                 
                 # Apply local search to the best random solution
                 if best_solution:
-                    improved_solution = self._bit_flip_local_search(best_solution, A, b)
+                    improved_solution = local_search_improvement(best_solution, A, b)
                     if improved_solution:
                         improved_slack = np.sum(np.abs(A.dot(improved_solution) - b))
                         if improved_slack < best_slack:
@@ -178,63 +234,9 @@ class LatticeBasedSolver:
                        'slack_total': best_slack}, time.time() - start_time
         except Exception as e:
             print(f"Lattice solver error: {e}")
+            import traceback
+            traceback.print_exc()
             return {'x': [0] * A.shape[1], 'slack_total': float('inf')}, time.time() - start_time
-    
-    def _bit_flip_local_search(self, solution, A, b, max_flips=None):
-        """
-        Improve solution using bit-flip local search
-        
-        Args:
-            solution: Initial binary solution
-            A: Constraint matrix
-            b: Target vector
-            max_flips: Maximum number of bit flips to try
-            
-        Returns:
-            Improved solution or None if no improvement found
-        """
-        n = len(solution)
-        if max_flips is None:
-            max_flips = min(n, 20)  # Limit search to avoid exponential blowup
-        
-        current_solution = solution.copy()
-        current_slack = np.sum(np.abs(A.dot(current_solution) - b))
-        
-        improved = True
-        flips_attempted = 0
-        
-        while improved and flips_attempted < max_flips:
-            improved = False
-            best_flip = None
-            best_slack = current_slack
-            
-            # Try flipping each bit
-            for i in range(n):
-                if flips_attempted >= max_flips:
-                    break
-                    
-                test_solution = current_solution.copy()
-                test_solution[i] = 1 - test_solution[i]  # Flip bit
-                test_slack = np.sum(np.abs(A.dot(test_solution) - b))
-                
-                if test_slack < best_slack:
-                    best_slack = test_slack
-                    best_flip = i
-                    improved = True
-                
-                flips_attempted += 1
-            
-            # Apply the best improvement found
-            if improved and best_flip is not None:
-                current_solution[best_flip] = 1 - current_solution[best_flip]
-                current_slack = best_slack
-        
-        # Return improved solution only if we actually improved
-        final_slack = np.sum(np.abs(A.dot(current_solution) - b))
-        if final_slack < np.sum(np.abs(A.dot(solution) - b)):
-            return current_solution.tolist()
-        else:
-            return None
 
 # Test function
 def test_lattice_solver():
