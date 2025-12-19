@@ -1,5 +1,5 @@
 #!/bin/sh
-'''exec' "/Users/user/Downloads/Market Split Problem/market_split_env/bin/python3.12" "$0" "$@"
+'''exec' "/Users/user/Downloads/Market Split Problem/market_split_env/bin/python3.14" "$0" "$@"
 ' '''
 import sys
 from dwave.cloud.cli import cli
