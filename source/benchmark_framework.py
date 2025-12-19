@@ -4,6 +4,7 @@
 import time
 import numpy as np
 from typing import Dict, List, Tuple, Callable
+import json
 
 # Try to import all solvers with graceful fallbacks
 def import_solvers():
@@ -302,52 +303,87 @@ class MarketSplitBenchmark:
     
     def save_results(self, filename: str = "benchmark_results.json"):
         """
-        Save benchmark results to JSON file
+        Save benchmark results to JSON file with proper NumPy type handling
         
         Args:
             filename: Output filename
         """
-        import json
         
-        # Convert numpy arrays and complex objects to serializable format
+        def convert_to_json_serializable(obj):
+            """Convert numpy types and complex objects to JSON-serializable format"""
+            if obj is None:
+                return None
+            elif isinstance(obj, (np.integer, np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, bool):
+                return bool(obj)
+            elif isinstance(obj, dict):
+                return {str(k): convert_to_json_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_to_json_serializable(item) for item in obj]
+            elif isinstance(obj, (str, int, float)):
+                return obj
+            else:
+                # Fallback for unknown types
+                return str(obj)
+        
+        # Create serializable results
         serializable_results = {}
         
         for solver_name, results in self.results.items():
-            serializable_results[solver_name] = {
-                'instances_tested': results['instances_tested'],
-                'successful_solutions': results['successful_solutions'],
-                'total_solve_time': results['total_solve_time'],
-                'avg_solve_time': results['avg_solve_time'],
-                'avg_slack_total': results['avg_slack_total'],
-                'success_rate': results['success_rate'],
+            solver_data = {
+                'instances_tested': int(convert_to_json_serializable(results['instances_tested'])),
+                'successful_solutions': int(convert_to_json_serializable(results['successful_solutions'])),
+                'total_solve_time': float(convert_to_json_serializable(results['total_solve_time'])),
+                'avg_solve_time': float(convert_to_json_serializable(results['avg_solve_time'])) if results['avg_solve_time'] != float('inf') else None,
+                'avg_slack_total': float(convert_to_json_serializable(results['avg_slack_total'])) if results['avg_slack_total'] != float('inf') else None,
+                'success_rate': float(convert_to_json_serializable(results['success_rate'])),
                 'individual_results': []
             }
             
+            # Process individual results
             for result in results['individual_results']:
-                serializable_result = {
-                    'success': result['success'],
-                    'solve_time': result['solve_time'],
-                    'total_time': result['total_time'],
-                    'slack_total': result['slack_total'],
+                individual_result = {
+                    'success': bool(convert_to_json_serializable(result['success'])),
+                    'solve_time': float(convert_to_json_serializable(result['solve_time'])) if result['solve_time'] != float('inf') else None,
+                    'total_time': float(convert_to_json_serializable(result['total_time'])) if result['total_time'] != float('inf') else None,
+                    'slack_total': float(convert_to_json_serializable(result['slack_total'])) if result['slack_total'] != float('inf') else None,
                     'error': result['error']
                 }
-                # Handle solution which might contain numpy arrays
+                
+                # Handle solution data
                 if 'solution' in result and result['solution']:
                     sol = result['solution']
-                    serializable_result['solution'] = {
-                        'x': sol.get('x', []),
-                        'slack_total': sol.get('slack_total', float('inf'))
+                    x_data = sol.get('x', [])
+                    if hasattr(x_data, 'tolist'):
+                        x_data = x_data.tolist()
+                    elif isinstance(x_data, (list, tuple)):
+                        x_data = [convert_to_json_serializable(val) for val in x_data]
+                    
+                    slack_val = sol.get('slack_total', float('inf'))
+                    slack_val = float(convert_to_json_serializable(slack_val)) if slack_val != float('inf') else None
+                    
+                    individual_result['solution'] = {
+                        'x': x_data,
+                        'slack_total': slack_val
                     }
                 else:
-                    serializable_result['solution'] = None
+                    individual_result['solution'] = None
                 
-                serializable_results[solver_name]['individual_results'].append(serializable_result)
+                solver_data['individual_results'].append(individual_result)
+            
+            serializable_results[solver_name] = solver_data
         
-        # Add import errors to results
+        # Add import errors
         serializable_results['_import_errors'] = self.import_errors
         
+        # Save to JSON file
         with open(filename, 'w') as f:
-            json.dump(serializable_results, f, indent=2)
+            json.dump(serializable_results, f, indent=2, ensure_ascii=False)
         
         print(f"Benchmark results saved to {filename}")
 

@@ -134,14 +134,21 @@ class LatticeBasedSolver:
         self.lambda_factor = lambda_factor
         
     def solve_market_split(self, A, b, time_limit=None):
-        """Solve MSP using lattice reduction"""
+        """Solve MSP using lattice reduction with improved post-processing"""
         import time
         start_time = time.time()
         
         try:
             solution = solve_diophant_lattice(A, b, self.lambda_factor)
             if solution is not None:
-                return {'x': solution, 'slack_total': 0}, time.time() - start_time
+                # Apply bit-flip local search post-processing to improve solution
+                improved_solution = self._bit_flip_local_search(solution, A, b)
+                if improved_solution:
+                    slack = np.sum(np.abs(A.dot(improved_solution) - b))
+                    return {'x': improved_solution, 'slack_total': slack}, time.time() - start_time
+                else:
+                    slack = np.sum(np.abs(A.dot(solution) - b))
+                    return {'x': solution, 'slack_total': slack}, time.time() - start_time
             else:
                 # If no exact solution found, return minimal slack solution
                 # Try a heuristic approach: find the best approximate solution
@@ -158,11 +165,76 @@ class LatticeBasedSolver:
                         best_slack = slack
                         best_solution = x_candidate.tolist()
                 
+                # Apply local search to the best random solution
+                if best_solution:
+                    improved_solution = self._bit_flip_local_search(best_solution, A, b)
+                    if improved_solution:
+                        improved_slack = np.sum(np.abs(A.dot(improved_solution) - b))
+                        if improved_slack < best_slack:
+                            best_slack = improved_slack
+                            best_solution = improved_solution
+                
                 return {'x': best_solution if best_solution else [0] * n, 
                        'slack_total': best_slack}, time.time() - start_time
         except Exception as e:
             print(f"Lattice solver error: {e}")
             return {'x': [0] * A.shape[1], 'slack_total': float('inf')}, time.time() - start_time
+    
+    def _bit_flip_local_search(self, solution, A, b, max_flips=None):
+        """
+        Improve solution using bit-flip local search
+        
+        Args:
+            solution: Initial binary solution
+            A: Constraint matrix
+            b: Target vector
+            max_flips: Maximum number of bit flips to try
+            
+        Returns:
+            Improved solution or None if no improvement found
+        """
+        n = len(solution)
+        if max_flips is None:
+            max_flips = min(n, 20)  # Limit search to avoid exponential blowup
+        
+        current_solution = solution.copy()
+        current_slack = np.sum(np.abs(A.dot(current_solution) - b))
+        
+        improved = True
+        flips_attempted = 0
+        
+        while improved and flips_attempted < max_flips:
+            improved = False
+            best_flip = None
+            best_slack = current_slack
+            
+            # Try flipping each bit
+            for i in range(n):
+                if flips_attempted >= max_flips:
+                    break
+                    
+                test_solution = current_solution.copy()
+                test_solution[i] = 1 - test_solution[i]  # Flip bit
+                test_slack = np.sum(np.abs(A.dot(test_solution) - b))
+                
+                if test_slack < best_slack:
+                    best_slack = test_slack
+                    best_flip = i
+                    improved = True
+                
+                flips_attempted += 1
+            
+            # Apply the best improvement found
+            if improved and best_flip is not None:
+                current_solution[best_flip] = 1 - current_solution[best_flip]
+                current_slack = best_slack
+        
+        # Return improved solution only if we actually improved
+        final_slack = np.sum(np.abs(A.dot(current_solution) - b))
+        if final_slack < np.sum(np.abs(A.dot(solution) - b)):
+            return current_solution.tolist()
+        else:
+            return None
 
 # Test function
 def test_lattice_solver():

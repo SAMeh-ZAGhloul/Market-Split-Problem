@@ -1,5 +1,5 @@
 # D-Wave Quantum Annealing Solver for Market Split Problem
-# Maps MSP to QUBO and solves on quantum annealer
+# Maps MSP to QUBO and solves on quantum annealer with improved formulation
 
 import numpy as np
 
@@ -12,7 +12,7 @@ except ImportError:
 
 def create_qubo_matrix(A, b, penalty=1000.0):
     """
-    Create QUBO matrix for Market Split Problem
+    Create QUBO matrix for Market Split Problem with improved formulation
     
     The QUBO formulation minimizes:
     P * sum_i (sum_j A[i,j] * x[j] + slack_minus[i] - slack_plus[i] - b[i])^2 + sum_i (slack_plus[i] + slack_minus[i])
@@ -31,6 +31,16 @@ def create_qubo_matrix(A, b, penalty=1000.0):
     
     Q = np.zeros((size, size))
     c = np.zeros(size)
+    
+    # Auto-tune penalty coefficient based on problem size
+    max_coeff = np.max(np.abs(A)) if A.size > 0 else 1
+    max_b = np.max(np.abs(b)) if b.size > 0 else 1
+    estimated_max_objective = m * max_b * max_coeff
+    
+    # Ensure penalty is sufficiently large
+    min_penalty = estimated_max_objective * 10 + 100
+    if penalty < min_penalty:
+        penalty = min_penalty
     
     # Objective: minimize sum of slack variables (encourages small slack)
     for i in range(n, n + m):
@@ -75,7 +85,7 @@ def create_qubo_matrix(A, b, penalty=1000.0):
     
     return Q, c
 
-def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=1000.0):
+def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=None):
     """
     Solve Market Split Problem using D-Wave quantum annealing
     
@@ -83,7 +93,7 @@ def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=1000.0):
         A: Matrix of retailer demands (m x n)
         b: Target allocation vector (m,)
         num_reads: Number of quantum annealing runs
-        penalty: Penalty coefficient for constraints
+        penalty: Penalty coefficient for constraints (auto-tuned if None)
         
     Returns:
         Solution dictionary with x values and slack total
@@ -91,18 +101,16 @@ def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=1000.0):
     if not DWAVE_AVAILABLE:
         raise ImportError("D-Wave libraries not available. Install with: pip install dwave-ocean-sdk")
     
+    # Auto-tune penalty if not provided
+    if penalty is None:
+        m, n = A.shape
+        max_coeff = np.max(np.abs(A)) if A.size > 0 else 1
+        max_b = np.max(np.abs(b)) if b.size > 0 else 1
+        estimated_max = m * max_b * max_coeff
+        penalty = max(1000, estimated_max * 10)
+    
     # Create QUBO matrix with proper penalty
     Q, c = create_qubo_matrix(A, b, penalty)
-    
-    # Ensure penalty is large enough to enforce constraints
-    # The penalty should be larger than the maximum possible objective value
-    max_coeff = np.max(np.abs(Q)) if Q.size > 0 else 1
-    max_linear = np.max(np.abs(c)) if c.size > 0 else 1
-    min_penalty = max(max_coeff, max_linear) * 10
-    
-    if penalty < min_penalty:
-        penalty = min_penalty
-        Q, c = create_qubo_matrix(A, b, penalty)
     
     # Create binary quadratic model
     # Note: dimod expects the Q matrix in upper triangular form
@@ -120,6 +128,11 @@ def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=1000.0):
     m = A.shape[0]
     x_solution = [int(best_sample[j]) for j in range(n)]
     
+    # Apply bit-flip local search post-processing
+    x_improved = bit_flip_local_search(x_solution, A, b)
+    if x_improved:
+        x_solution = x_improved
+    
     # Calculate slack
     slack_total = 0
     for i in range(m):
@@ -129,15 +142,71 @@ def solve_dwave_quantum_annealing(A, b, num_reads=1000, penalty=1000.0):
     
     return {'x': x_solution, 'slack_total': slack_total}
 
+def bit_flip_local_search(solution, A, b, max_flips=None):
+    """
+    Improve solution using bit-flip local search
+    
+    Args:
+        solution: Initial binary solution
+        A: Constraint matrix
+        b: Target vector
+        max_flips: Maximum number of bit flips to try
+        
+    Returns:
+        Improved solution or None if no improvement found
+    """
+    n = len(solution)
+    if max_flips is None:
+        max_flips = min(n, 15)  # Limit search for quantum methods
+    
+    current_solution = solution.copy()
+    current_slack = np.sum(np.abs(A.dot(current_solution) - b))
+    
+    improved = True
+    flips_attempted = 0
+    
+    while improved and flips_attempted < max_flips:
+        improved = False
+        best_flip = None
+        best_slack = current_slack
+        
+        # Try flipping each bit
+        for i in range(n):
+            if flips_attempted >= max_flips:
+                break
+                
+            test_solution = current_solution.copy()
+            test_solution[i] = 1 - test_solution[i]  # Flip bit
+            test_slack = np.sum(np.abs(A.dot(test_solution) - b))
+            
+            if test_slack < best_slack:
+                best_slack = test_slack
+                best_flip = i
+                improved = True
+            
+            flips_attempted += 1
+        
+        # Apply the best improvement found
+        if improved and best_flip is not None:
+            current_solution[best_flip] = 1 - current_solution[best_flip]
+            current_slack = best_slack
+    
+    # Return improved solution only if we actually improved
+    final_slack = np.sum(np.abs(A.dot(current_solution) - b))
+    if final_slack < np.sum(np.abs(A.dot(solution) - b)):
+        return current_solution.tolist()
+    else:
+        return None
+
 class DWaveMarketSplitSolver:
     """D-Wave quantum annealing solver for Market Split Problem"""
     
-    def __init__(self, penalty=1000.0, num_reads=1000):
+    def __init__(self, penalty=None, num_reads=1000):
         self.penalty = penalty
         self.num_reads = num_reads
         
     def solve_market_split(self, A, b, time_limit=None):
-        """Solve MSP using D-Wave quantum annealing"""
+        """Solve MSP using D-Wave quantum annealing with post-processing"""
         import time
         start_time = time.time()
         

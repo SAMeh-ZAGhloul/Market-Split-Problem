@@ -320,17 +320,14 @@ source market_split_env/bin/activate
 pip install -r source/requirements.txt
 ```
 
-### Run Example
+### Run Benchmarks 
 
-Test the complete setup with a simple example:
 
 ```bash
-# Run the benchmarking framework
-python3 source/benchmark_framework.py
-
-# Or run a simple example
-python3 source/example_usage.py
+cd source
+python3 benchmark_framework.py
 ```
+All benchmark results wil be stored in: source/benchmark_results.json
 
 ## Performance Notes
 
